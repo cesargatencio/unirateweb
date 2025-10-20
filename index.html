@@ -22,6 +22,13 @@
     <h3 id="title">Procesando…</h3>
     <p id="desc" class="muted">Espera un momento.</p>
 
+    <div id="otp" style="display:none;">
+      <input id="otpEmail" type="email" placeholder="Tu correo" autocomplete="email" />
+      <input id="otpCode" type="text" placeholder="Código de 6 dígitos" inputmode="numeric" />
+      <button id="otpBtn" class="primary">Verificar código</button>
+      <p id="otpMsg" class="muted"></p>
+    </div>
+
     <div id="recovery" style="display:none;">
       <input id="pwd1" type="password" placeholder="Nueva contraseña" autocomplete="new-password" />
       <input id="pwd2" type="password" placeholder="Repite la contraseña" autocomplete="new-password" />
@@ -40,16 +47,16 @@
   <script>
     // ==== CONFIG ====
     const SUPABASE_URL = 'https://hsiwcusolcaicuxhnkcb.supabase.co';
-    const SUPABASE_ANON_KEY = 'SUPABASE_CLIENT_API_KEY'; // copia literal del panel
+    // REPLACE the placeholder below with your real Client API Key (anon public key) from the Supabase panel
+    const SUPABASE_ANON_KEY = 'PASTE_YOUR_CLIENT_API_KEY_HERE';
+
     // Opcional: deep link de tu app si quieres botón "Abrir app"
     const APP_DEEP_LINK = null; // p.ej. 'myapp://auth-callback' o 'exp://127.0.0.1:19000'
 
-    export const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-)
-
-    const sp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // --- crear cliente (evita export / process.env en navegador) ---
+    const sp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { detectSessionInUrl: false, autoRefreshToken: true, persistSession: true }
+    });
 
     // Supabase usa fragmento hash tras '#'. Lo convertimos a query para fácil lectura.
     const hash = location.hash.startsWith('#') ? location.hash.slice(1) : '';
@@ -62,78 +69,109 @@
     const show = (id, vis) => byId(id).style.display = vis ? 'block' : 'none';
 
     async function ensureSessionFromSupabaseParams() {
-  const access_token = merged.get('access_token');
-  const refresh_token = merged.get('refresh_token') || null;
-  const code  = merged.get('code');
-  const token = merged.get('token');
-  const type  = merged.get('type'); // 'signup' | 'invite' | 'email_change' | 'recovery'
-  const flow  = merged.get('flow');
+      const access_token = merged.get('access_token');
+      const refresh_token = merged.get('refresh_token') || null;
+      const code  = merged.get('code');
+      const token = merged.get('token');
+      const type  = merged.get('type'); // 'signup' | 'invite' | 'email_change' | 'recovery'
+      const flow  = merged.get('flow');
 
-  try {
-    if (access_token) {
-      const { error } = await sp.auth.setSession({ access_token, refresh_token });
-      if (error) throw error;
+      try {
+        // 1) Link con access_token (incluye recovery)
+        if (access_token) {
+          const { error } = await sp.auth.setSession({ access_token, refresh_token });
+          if (error) throw error;
 
-      if (type === 'recovery') {
+          // Validación extra tras crear sesión
+          const { error: meErr } = await sp.auth.getUser();
+          if (meErr) throw meErr;
+
+          if (type === 'recovery') {
+            byId('title').textContent = 'Restablecer contraseña';
+            byId('desc').textContent = 'Ingresa tu nueva contraseña.';
+            show('recovery', true);
+            return;
+          }
+          byId('title').textContent = 'Autenticación completada';
+          byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
+          show('done', true);
+          cleanUrl();
+          return;
+        }
+
+        // 2) PKCE
+        if (code) {
+          const { error } = await sp.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+          byId('title').textContent = 'Autenticación completada';
+          byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
+          show('done', true);
+          cleanUrl();
+          return;
+        }
+
+        // 3) token_hash desde link (recovery / signup / email_change / invite)
+        if (token && (type === 'recovery' || type === 'signup' || type === 'email_change' || type === 'invite')) {
+          const kind = type === 'recovery' ? 'recovery' : 'email';
+          const { error } = await sp.auth.verifyOtp({ type: kind, token_hash: token });
+          if (error) throw error;
+
+          if (type === 'recovery') {
+            byId('title').textContent = 'Restablecer contraseña';
+            byId('desc').textContent = 'Ingresa tu nueva contraseña.';
+            show('recovery', true);
+            cleanUrl();
+            return;
+          } else {
+            byId('title').textContent = 'Correo verificado';
+            byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
+            show('done', true);
+            cleanUrl();
+            return;
+          }
+        }
+
+        // 4) Sin tokens: muestra entrada de código OTP
         byId('title').textContent = 'Restablecer contraseña';
-        byId('desc').textContent = 'Ingresa tu nueva contraseña.';
-        show('recovery', true);
-        return;
+        byId('desc').textContent = 'Ingresa el código de 6 dígitos del correo y tu email.';
+        show('otp', true);
+      } catch (err) {
+        console.error(err);
+        byId('title').textContent = 'No se pudo completar la autenticación';
+        byId('desc').textContent = (err?.message || '').includes('Failed to fetch')
+          ? 'Error de red o CORS. Verifica Redirect URLs y CORS en Supabase.'
+          : String(err?.message || err);
       }
-
-      byId('title').textContent = 'Autenticación completada';
-      byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
-      show('done', true);
-      cleanUrl();
-      return;
     }
-
-    if (code) {
-      const { error } = await sp.auth.exchangeCodeForSession(code);
-      if (error) throw error;
-
-      byId('title').textContent = 'Autenticación completada';
-      byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
-      show('done', true);
-      cleanUrl();
-      return;
-    }
-
-    if (token && (type === 'signup' || type === 'invite' || type === 'email_change')) {
-      const { error } = await sp.auth.verifyOtp({ type: 'email', token_hash: token });
-      if (error) throw error;
-
-      byId('title').textContent = 'Correo verificado';
-      byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
-      show('done', true);
-      cleanUrl();
-      return;
-    }
-
-    // Recuperación vía token_hash (algunos correos llegan así)
-    if (token && type === 'recovery') {
-      const { error } = await sp.auth.verifyOtp({ type: 'recovery', token_hash: token });
-      if (error) throw error;
-      byId('title').textContent = 'Restablecer contraseña';
-      byId('desc').textContent = 'Ingresa tu nueva contraseña.';
-      show('recovery', true);
-      cleanUrl();
-      return;
-    }
-
-    byId('title').textContent = 'Enlace inválido o expirado';
-    byId('desc').textContent = 'Solicita un nuevo enlace desde la app.';
-  } catch (err) {
-    byId('title').textContent = 'No se pudo completar la autenticación';
-    byId('desc').textContent = String(err.message || err);
-  }
-}
-
 
     function validatePassword(pwd) {
-  // ≥8 chars, 1 mayúscula, 1 número, 1 especial
-  return /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=\[\]{};:'",.<>?/\\|`~]).{8,}$/.test(pwd);
-}
+      // ≥8 chars, 1 mayúscula, 1 número, 1 especial
+      return /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=\[\]{};:'",.<>?/\\|`~]).{8,}$/.test(pwd);
+    }
+
+    async function verifyOtpCodeFlow() {
+      const email = byId('otpEmail').value.trim();
+      const code = byId('otpCode').value.trim();
+      const msg  = byId('otpMsg');
+      const btn  = byId('otpBtn');
+
+      msg.className = 'muted';
+      if (!email) { msg.textContent = 'Ingresa tu correo.'; return; }
+      if (!/^\d{6}$/.test(code)) { msg.textContent = 'Ingresa el código de 6 dígitos.'; return; }
+
+      btn.disabled = true; btn.textContent = 'Verificando…'; msg.textContent = '';
+      const { data, error } = await sp.auth.verifyOtp({ email, token: code, type: 'recovery' });
+      btn.disabled = false; btn.textContent = 'Verificar código';
+
+      if (error) { msg.className = 'err'; msg.textContent = error.message; return; }
+
+      // Si el verifyOtp inicia sesión, ya podemos mostrar el formulario de nueva clave
+      byId('title').textContent = 'Restablecer contraseña';
+      byId('desc').textContent = 'Ingresa tu nueva contraseña.';
+      show('otp', false);
+      show('recovery', true);
+      cleanUrl();
+    }
 
     async function saveNewPassword() {
       const p1 = byId('pwd1').value.trim();
@@ -164,21 +202,26 @@
 
     byId('save').addEventListener('click', saveNewPassword);
 
-['pwd1','pwd2'].forEach(id => {
-  byId(id).addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveNewPassword();
-  });
-});
+    byId('otpBtn').addEventListener('click', verifyOtpCodeFlow);
+    ['otpEmail','otpCode'].forEach(id => {
+      byId(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyOtpCodeFlow(); });
+    });
+
+    ['pwd1','pwd2'].forEach(id => {
+      byId(id).addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') saveNewPassword();
+      });
+    });
 
     // Ejecuta
     ensureSessionFromSupabaseParams();
 
     function cleanUrl() {
-  const url = new URL(location.href);
-  url.hash = '';
-  url.search = '';
-  history.replaceState({}, document.title, url.toString());
-}
+      const url = new URL(location.href);
+      url.hash = '';
+      url.search = '';
+      history.replaceState({}, document.title, url.toString());
+    }
 
   </script>
 </body>
