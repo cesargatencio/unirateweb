@@ -105,6 +105,17 @@
       return;
     }
 
+    // Recuperación vía token_hash (algunos correos llegan así)
+    if (token && type === 'recovery') {
+      const { error } = await sp.auth.verifyOtp({ type: 'recovery', token_hash: token });
+      if (error) throw error;
+      byId('title').textContent = 'Restablecer contraseña';
+      byId('desc').textContent = 'Ingresa tu nueva contraseña.';
+      show('recovery', true);
+      cleanUrl();
+      return;
+    }
+
     byId('title').textContent = 'Enlace inválido o expirado';
     byId('desc').textContent = 'Solicita un nuevo enlace desde la app.';
   } catch (err) {
@@ -114,29 +125,45 @@
 }
 
 
+    function validatePassword(pwd) {
+  // ≥8 chars, 1 mayúscula, 1 número, 1 especial
+  return /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=\[\]{};:'",.<>?/\\|`~]).{8,}$/.test(pwd);
+}
+
     async function saveNewPassword() {
       const p1 = byId('pwd1').value.trim();
       const p2 = byId('pwd2').value.trim();
       const msg = byId('msg');
+      const btn = byId('save');
 
-      if (!p1 || p1.length < 8) { msg.textContent = 'Usa mínimo 8 caracteres.'; return; }
+      msg.className = 'muted';
+      if (!p1 || !p2) { msg.textContent = 'Completa ambos campos.'; return; }
       if (p1 !== p2) { msg.textContent = 'Las contraseñas no coinciden.'; return; }
-
-      msg.textContent = 'Guardando…';
-      const { error } = await sp.auth.updateUser({ password: p1 });
-      if (error) {
-        msg.className = 'err';
-        msg.textContent = error.message;
+      if (!validatePassword(p1)) {
+        msg.textContent = 'Mín. 8, 1 mayúscula, 1 número y 1 caracter especial.';
         return;
       }
-      msg.className = 'ok';
-      msg.textContent = 'Contraseña actualizada.';
+
+      btn.disabled = true; btn.textContent = 'Guardando…'; msg.textContent = '';
+      const { error } = await sp.auth.updateUser({ password: p1 });
+      btn.disabled = false; btn.textContent = 'Guardar contraseña';
+
+      if (error) { msg.className = 'err'; msg.textContent = error.message; return; }
+
+      msg.className = 'ok'; msg.textContent = 'Contraseña actualizada.';
       show('recovery', false);
-      byId('doneMsg').textContent = 'Contraseña actualizada.';
+      byId('doneMsg').textContent = 'Contraseña actualizada. Ya puedes ingresar en la app.';
       show('done', true);
+      cleanUrl();
     }
 
     byId('save').addEventListener('click', saveNewPassword);
+
+['pwd1','pwd2'].forEach(id => {
+  byId(id).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveNewPassword();
+  });
+});
 
     // Ejecuta
     ensureSessionFromSupabaseParams();
