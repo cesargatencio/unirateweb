@@ -110,25 +110,26 @@
           return;
         }
 
-        // 3) token_hash desde link (recovery / signup / email_change / invite)
-        if (token && (type === 'recovery' || type === 'signup' || type === 'email_change' || type === 'invite')) {
-          const kind = type === 'recovery' ? 'recovery' : 'email';
-          const { error } = await sp.auth.verifyOtp({ type: kind, token_hash: token });
+        // 3a) Recuperación vía token_hash (algunos correos llegan así)
+        if (token && type === 'recovery') {
+          const { error } = await sp.auth.verifyOtp({ type: 'recovery', token_hash: token });
           if (error) throw error;
+          byId('title').textContent = 'Restablecer contraseña';
+          byId('desc').textContent = 'Ingresa tu nueva contraseña.';
+          show('recovery', true);
+          cleanUrl();
+          return;
+        }
 
-          if (type === 'recovery') {
-            byId('title').textContent = 'Restablecer contraseña';
-            byId('desc').textContent = 'Ingresa tu nueva contraseña.';
-            show('recovery', true);
-            cleanUrl();
-            return;
-          } else {
-            byId('title').textContent = 'Correo verificado';
-            byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
-            show('done', true);
-            cleanUrl();
-            return;
-          }
+        // 3b) token_hash desde link (signup / email_change / invite)
+        if (token && (type === 'signup' || type === 'email_change' || type === 'invite')) {
+          const { error } = await sp.auth.verifyOtp({ type: 'email', token_hash: token });
+          if (error) throw error;
+          byId('title').textContent = 'Correo verificado';
+          byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
+          show('done', true);
+          cleanUrl();
+          return;
         }
 
         // 4) Sin tokens: muestra entrada de código OTP
@@ -160,7 +161,11 @@
       if (!/^\d{6}$/.test(code)) { msg.textContent = 'Ingresa el código de 6 dígitos.'; return; }
 
       btn.disabled = true; btn.textContent = 'Verificando…'; msg.textContent = '';
-      const { data, error } = await sp.auth.verifyOtp({ email, token: code, type: 'recovery' });
+      const { data, error } = await sp.auth.verifyOtp({
+        email,
+        token: code,           // <-- código de 6 dígitos
+        type: 'recovery'       // <-- tipo correcto
+      });
       btn.disabled = false; btn.textContent = 'Verificar código';
 
       if (error) { msg.className = 'err'; msg.textContent = error.message; return; }
