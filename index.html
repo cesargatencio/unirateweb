@@ -44,6 +44,11 @@
     // Opcional: deep link de tu app si quieres botón "Abrir app"
     const APP_DEEP_LINK = null; // p.ej. 'myapp://auth-callback' o 'exp://127.0.0.1:19000'
 
+    export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+)
+
     const sp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // Supabase usa fragmento hash tras '#'. Lo convertimos a query para fácil lectura.
