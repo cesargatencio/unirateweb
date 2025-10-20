@@ -57,50 +57,62 @@
     const show = (id, vis) => byId(id).style.display = vis ? 'block' : 'none';
 
     async function ensureSessionFromSupabaseParams() {
-      // En recovery y OAuth, Supabase retorna access_token en el hash.
-      const access_token = merged.get('access_token');
-      const refresh_token = merged.get('refresh_token') || null;
-      const type = merged.get('type'); // 'recovery' en reset de contraseña
-      const flow = merged.get('flow'); // 'google' en nuestro signInWithOAuth
+  const access_token = merged.get('access_token');
+  const refresh_token = merged.get('refresh_token') || null;
+  const code  = merged.get('code');
+  const token = merged.get('token');
+  const type  = merged.get('type'); // 'signup' | 'invite' | 'email_change' | 'recovery'
+  const flow  = merged.get('flow');
 
-      if (!access_token) {
-        // Sin token: puede ser link inválido o expirado
-        byId('title').textContent = 'Enlace inválido o expirado';
-        byId('desc').textContent = 'Solicita un nuevo enlace desde la app.';
-        return { ok: false, type };
-      }
-
+  try {
+    if (access_token) {
       const { error } = await sp.auth.setSession({ access_token, refresh_token });
-      if (error) {
-        byId('title').textContent = 'No se pudo iniciar sesión con el enlace';
-        byId('desc').textContent = error.message;
-        return { ok: false, type };
-      }
+      if (error) throw error;
 
-      // Sesión creada correctamente
       if (type === 'recovery') {
         byId('title').textContent = 'Restablecer contraseña';
         byId('desc').textContent = 'Ingresa tu nueva contraseña.';
         show('recovery', true);
-        return { ok: true, type: 'recovery' };
-      } else {
-        // OAuth Google u otro
-        byId('title').textContent = 'Autenticación completada';
-        byId('desc').textContent = flow === 'google'
-          ? 'Tu sesión con Google está activa.'
-          : 'Tu sesión está activa.';
-        show('done', true);
-        if (APP_DEEP_LINK) {
-          // Opcional: mostrar botón para volver a la app
-          const a = document.createElement('a');
-          a.href = APP_DEEP_LINK;
-          a.className = 'link';
-          a.textContent = 'Abrir la app';
-          byId('done').appendChild(a);
-        }
-        return { ok: true, type: 'oauth' };
+        return;
       }
+
+      byId('title').textContent = 'Autenticación completada';
+      byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
+      show('done', true);
+      cleanUrl();
+      return;
     }
+
+    if (code) {
+      const { error } = await sp.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+
+      byId('title').textContent = 'Autenticación completada';
+      byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
+      show('done', true);
+      cleanUrl();
+      return;
+    }
+
+    if (token && (type === 'signup' || type === 'invite' || type === 'email_change')) {
+      const { error } = await sp.auth.verifyOtp({ type: 'email', token_hash: token });
+      if (error) throw error;
+
+      byId('title').textContent = 'Correo verificado';
+      byId('desc').textContent = 'Tu usuario ya fue autenticado. Puedes ingresar en la app.';
+      show('done', true);
+      cleanUrl();
+      return;
+    }
+
+    byId('title').textContent = 'Enlace inválido o expirado';
+    byId('desc').textContent = 'Solicita un nuevo enlace desde la app.';
+  } catch (err) {
+    byId('title').textContent = 'No se pudo completar la autenticación';
+    byId('desc').textContent = String(err.message || err);
+  }
+}
+
 
     async function saveNewPassword() {
       const p1 = byId('pwd1').value.trim();
@@ -128,6 +140,14 @@
 
     // Ejecuta
     ensureSessionFromSupabaseParams();
+
+    function cleanUrl() {
+  const url = new URL(location.href);
+  url.hash = '';
+  url.search = '';
+  history.replaceState({}, document.title, url.toString());
+}
+
   </script>
 </body>
 </html>
